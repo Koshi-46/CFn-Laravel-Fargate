@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Laravel deployed to Fargate"
+Parameters:
+  Cluster:
+    Type: String
+    Default: laravel-fargate
+  Service:
+    Type: String
+    Default: laravel-fargate-service
+  FullRepositoryId:
+    Description: "Github full repository id (ex. OwnerName/RepositoryName)"
+    Type: String
+    Default: ----------------
+  ConnectionArn:
+    # 作成したCodeStar ConnectionsのARN
+    Description: "CodeStar connection arn (ex. arn:aws:codestar-connections:ap-northeast-1:xxxxx)"
+    Type: String
+    Default: arn:aws:codestar-connections:ap-northeast-1:0000000000:connection/-------------------
+  Branch:
+    Type: String
+    Default: main
+  S3Artifact:
+    Type: String
+    Default: laravel-fargate-artifact-bucket
+Resources:
+#-----------------------------------------------------------------------------
+# S3 Artifact
+#-----------------------------------------------------------------------------
+    LaravelFargateArtifactBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                  - ServerSideEncryptionByDefault:
+                      SSEAlgorithm: AES256
+            BucketName: laravel-fargate-artifact-bucket
+            OwnershipControls:
+                Rules:
+                    - ObjectOwnership: BucketOwnerEnforced
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: True
+                BlockPublicPolicy: True
+                IgnorePublicAcls: True
+                RestrictPublicBuckets: True
+            Tags:
+                - Key: Name
+                  Value: laravel-fargate-artifact-bucket
+# ------------------------------------------------------------#
+# Target Group
+# ------------------------------------------------------------#
+    LaravelFargateTargetGroup:
+      Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+      Properties:
+          HealthCheckPath: "/"
+          Port: 80
+          Protocol: "HTTP"
+          HealthCheckPort: "traffic-port"
+          HealthCheckProtocol: "HTTP"
+          TargetType: "ip"
+          Matcher:
+              HttpCode: "200"
+          VpcId: !ImportValue sample-dev-vpc
+          Name: "laravel-ecs-tg"
+          HealthCheckEnabled: true
+          Targets:
+            -
+              Id: "10.0.00.000"
+              Port: 80
+              AvailabilityZone: !Sub "${AWS::Region}a"
+
+
+# ------------------------------------------------------------#
+# LoadBalancer
+# ------------------------------------------------------------#
+    LaravelFargateLoadBalancer:
+        Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        Properties:
+            Name: "laravel-alb"
+            Scheme: "internet-facing"
+            Type: "application"
+            Subnets:
+              - !ImportValue sample-dev-public-subnet-a
+              - !ImportValue sample-dev-public-subnet-c
+            SecurityGroups:
+              - !ImportValue AppSecurityGroup
+            IpAddressType: "ipv4"
+            # LoadBalancerAttributes:
+            #   -
+            #     Key: "access_logs.s3.enabled"
+            #     Value: "false"
+            #   -
+            #     Key: "deletion_protection.enabled"
+            #     Value: "true"
+
+
+# ------------------------------------------------------------#
+# Listener
+# ------------------------------------------------------------#
+    LaravelFargateListener:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+            LoadBalancerArn: !Ref LaravelFargateLoadBalancer
+            Port: 80
+            Protocol: "HTTP"
+            DefaultActions:
+              -
+                TargetGroupArn: !Ref LaravelFargateTargetGroup
+                Type: "forward"
+
+
+# ------------------------------------------------------------#
+# ECS Cluster
+# ------------------------------------------------------------#
+    ECSCluster:
+        Type: "AWS::ECS::Cluster"
+        Properties:
+            ClusterName: !Ref Cluster
+
+
+# ------------------------------------------------------------#
+#  ECS Service
+# ------------------------------------------------------------#
+    ECSService:
+        Type: "AWS::ECS::Service"
+        Properties:
+            ServiceName: !Ref Service
+            Cluster: !GetAtt ECSCluster.Arn
+            LoadBalancers:
+              -
+                TargetGroupArn: !Ref LaravelFargateTargetGroup
+                ContainerName: "nginx"
+                ContainerPort: 80
+            DesiredCount: 1
+            LaunchType: "FARGATE"
+            PlatformVersion: "1.4.0"
+            TaskDefinition: "laravel-dev"
+            NetworkConfiguration:
+                AwsvpcConfiguration:
+                    AssignPublicIp: "ENABLED"
+                    SecurityGroups:
+                      - !ImportValue FargateSecurityGroup
+                    Subnets:
+                      - !ImportValue sample-dev-public-subnet-a
+                      - !ImportValue sample-dev-public-subnet-c
+            # HealthCheckGracePeriodSeconds: 0
+            # SchedulingStrategy: "REPLICA"
+            # DeploymentController:
+            #     Type: "ECS"
+
+
+
+
+
+
+
+
+
+
+#-----------------------------------------------------------------------------#
+#
+#
+#  ----------------------------  Auto Deploy  -----------------------------
+#
+#
+#-----------------------------------------------------------------------------#
+
+
+#-----------------------------------------------------------------------------
+# Role
+#-----------------------------------------------------------------------------
+    # Codebuild
+    CodeBuildServiceRole:
+        Type: AWS::IAM::Role
+        Properties:
+          Path: /
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Principal:
+                  Service: codebuild.amazonaws.com
+                Action: sts:AssumeRole
+          Policies:
+            - PolicyName: SampleCodeBuildAccess
+              PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - Resource: "*"
+                    Effect: Allow
+                    Action:
+                      - logs:CreateLogGroup
+                      - logs:CreateLogStream
+                      - logs:PutLogEvents
+                      - ecr:GetAuthorizationToken
+                      - ecr:BatchCheckLayerAvailability
+                      - ecr:GetDownloadUrlForLayer
+                      - ecr:GetRepositoryPolicy
+                      - ecr:DescribeRepositories
+                      - ecr:ListImages
+                      - ecr:DescribeImages
+                      - ecr:BatchGetImage
+                      - ecr:InitiateLayerUpload
+                      - ecr:UploadLayerPart
+                      - ecr:CompleteLayerUpload
+                      - ecr:PutImage
+                      - secretsmanager:GetSecretValue
+                      - secretsmanager:DescribeSecret
+                  - Resource: !Sub arn:${AWS::Partition}:s3:::${S3Artifact}/*
+                    Effect: Allow
+                    Action:
+                      - s3:GetObject
+                      - s3:PutObject
+                      - s3:GetObjectVersion
+                      - s3:GetBucketAcl
+                      - s3:GetBucketLocation
+
+
+
+    # CodePipeline Policy
+    CodePipelineIAMPolicy:
+        Type: AWS::IAM::ManagedPolicy
+        Properties:
+            ManagedPolicyName: PipelineAccessPolicy
+            PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Action:
+                        - "codestar-connections:CreateConnection"
+                        - "codestar-connections:DeleteConnection"
+                        - "codestar-connections:UseConnection"
+                        - "codestar-connections:GetConnection"
+                        - "codestar-connections:ListConnections"
+                        - "codestar-connections:TagResource"
+                        - "codestar-connections:ListTagsForResource"
+                        - "codestar-connections:UntagResource"
+                        - "codedeploy:CreateDeployment"
+                        - "codedeploy:GetApplication"
+                        - "codedeploy:GetApplicationRevision"
+                        - "codedeploy:GetDeployment"
+                        - "codedeploy:GetDeploymentConfig"
+                        - "codedeploy:RegisterApplicationRevision"
+                        - "s3:GetObject"
+                        - "s3:PutObject"
+                        - "s3:ListBucket"
+                        - "codebuild:*"
+                        - "iam:PassRole" # タスク定義でタスクロールやタスク実行ロールを定義している場合に必要
+                        - "ecs:*"
+                        - "ecr:*"
+                      Resource:
+                        - "*"
+
+
+    # CodePipeline Role
+    CodePipelineIAMRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                        Service:
+                          - codepipeline.amazonaws.com
+                      Action:
+                        - 'sts:AssumeRole'
+            ManagedPolicyArns:
+                - !Ref CodePipelineIAMPolicy
+            RoleName: PipelineServiceRole
+            Tags:
+                - Key: Name
+                  Value: PipelineServiceRole
+
+
+
+#-----------------------------------------------------------------------------
+# CodePipeline
+#-----------------------------------------------------------------------------
+    CodePipelinePipeline:
+        Type: "AWS::CodePipeline::Pipeline"
+        Properties:
+            Name: "laravel-fargate"
+            RoleArn: !GetAtt CodePipelineIAMRole.Arn
+            ArtifactStore:
+                Type: "S3"
+                Location: !Ref LaravelFargateArtifactBucket
+            Stages:
+              -
+                Name: "Source"
+                Actions:
+                  -
+                    Name: "Source"
+                    ActionTypeId:
+                        Category: "Source"
+                        Owner: AWS
+                        Provider: CodeStarSourceConnection
+                        Version: 1
+                    Configuration:
+                        FullRepositoryId: !Ref FullRepositoryId
+                        ConnectionArn: !Ref ConnectionArn
+                        BranchName: !Ref Branch
+                        # ソースコード変更時にパイプラインを自動的に開始する
+                        DetectChanges: "true"
+                    OutputArtifacts:
+                      -
+                        Name: "SourceArtifact"
+                    RunOrder: 1
+              -
+                Name: "Build"
+                Actions:
+                  -
+                    Name: "Build"
+                    ActionTypeId:
+                        Category: "Build"
+                        Owner: "AWS"
+                        Provider: "CodeBuild"
+                        Version: "1"
+                    Configuration:
+                        EnvironmentVariables: !Sub "[{\"name\":\"DOCKERHUB_USERNAME\",\"value\":\"dockerhub-secret:username\",\"type\":\"SECRETS_MANAGER\"},{\"name\":\"DOCKERHUB_PASSWORD\",\"value\":\"dockerhub-secret:password\",\"type\":\"SECRETS_MANAGER\"},{\"name\":\"REPOSITORY_URI_NGINX\",\"value\":\"${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/laravel-nginx\",\"type\":\"PLAINTEXT\"},{\"name\":\"REPOSITORY_URI_PHP\",\"value\":\"${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/laravel-php\",\"type\":\"PLAINTEXT\"}]"
+                        ProjectName: !Ref CodeBuildProject
+                    InputArtifacts:
+                      -
+                        Name: "SourceArtifact"
+                    OutputArtifacts:
+                      -
+                        Name: "BuildArtifact"
+                    RunOrder: 1
+              -
+                Name: "Deploy"
+                Actions:
+                  -
+                    Name: "Deploy"
+                    ActionTypeId:
+                        Category: "Deploy"
+                        Owner: "AWS"
+                        Provider: "ECS"
+                        Version: "1"
+                    Configuration:
+                        ClusterName: !Ref Cluster
+                        ServiceName: !Ref Service
+                    InputArtifacts:
+                      -
+                        Name: "BuildArtifact"
+                    RunOrder: 1
+
+
+#-----------------------------------------------------------------------------
+# CodeBuild
+#-----------------------------------------------------------------------------
+    CodeBuildProject:
+        Type: "AWS::CodeBuild::Project"
+        Properties:
+            Name: "laravel-fargate-AutoBuild"
+            Description: "FargateにデプロイしたLaravel APIの自動デプロイ（ビルド環境）"
+            Source:
+                InsecureSsl: false
+                Type: "CODEPIPELINE"
+            Artifacts:
+                EncryptionDisabled: false
+                Name: "laravel-fargate-AutoBuild"
+                Packaging: "NONE"
+                Type: "CODEPIPELINE"
+            Cache:
+                Type: "NO_CACHE"
+            Environment:
+                ComputeType: "BUILD_GENERAL1_SMALL"
+                Image: "aws/codebuild/amazonlinux2-aarch64-standard:2.0"
+                ImagePullCredentialsType: "CODEBUILD"
+                PrivilegedMode: true
+                Type: "ARM_CONTAINER"
+            ServiceRole: !Ref CodeBuildServiceRole
+            # TimeoutInMinutes: 60
+            # QueuedTimeoutInMinutes: 480
+            # EncryptionKey: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3"
+            # BadgeEnabled: false
+            # LogsConfig:
+            #     CloudWatchLogs:
+            #         Status: "ENABLED"
+            #     S3Logs:
+            #         Status: "DISABLED"
+            #         EncryptionDisabled: false
+            # Visibility: "PRIVATE"

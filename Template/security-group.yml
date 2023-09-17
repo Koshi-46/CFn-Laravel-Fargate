@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Security Group for Dev"
+Resources:
+
+    RDSSecurityGroup:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "Dev RDS security group"
+            GroupName: "sample-rds-sg-dev"
+            VpcId: !ImportValue sample-dev-vpc
+            SecurityGroupIngress:
+              -
+                CidrIp: "0.0.0.0/0"
+                Description: "testing-for-laravel-ecs"
+                FromPort: 3306
+                IpProtocol: "tcp"
+                ToPort: 3306
+              -
+                SourceSecurityGroupId: !Ref FargateSecurityGroup
+                SourceSecurityGroupOwnerId: !Ref AWS::AccountId
+                Description: "Laravel-fargate"
+                FromPort: 3306
+                IpProtocol: "tcp"
+                ToPort: 3306
+    RDSSecurityGroupIngress:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !GetAtt RDSSecurityGroup.GroupId
+        IpProtocol: tcp
+        FromPort: "3306"
+        ToPort: "3306"
+        SourceSecurityGroupId: !GetAtt RDSSecurityGroup.GroupId
+    RDSSecurityGroupEgress:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !GetAtt RDSSecurityGroup.GroupId
+        IpProtocol: tcp
+        FromPort: "3306"
+        ToPort: "3306"
+        SourceSecurityGroupId: !GetAtt RDSSecurityGroup.GroupId
+
+    FargateSecurityGroup:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "sample-app-dev-fargate"
+            GroupName: "sample-app-dev-fargate"
+            VpcId: !ImportValue sample-dev-vpc
+            SecurityGroupIngress:
+              -
+                CidrIp: "0.0.0.0/0"
+                FromPort: 80
+                IpProtocol: "tcp"
+                ToPort: 80
+              -
+                CidrIp: "0.0.0.0/0"
+                FromPort: 443
+                IpProtocol: "tcp"
+                ToPort: 443
+            SecurityGroupEgress:
+              -
+                CidrIp: "0.0.0.0/0"
+                IpProtocol: "-1"
+
+    AppSecurityGroup:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "sample-app-dev-sg"
+            GroupName: "sample-app-dev-sg"
+            VpcId: !ImportValue sample-dev-vpc
+            SecurityGroupIngress:
+              -
+                CidrIp: "0.0.0.0/0"
+                FromPort: 80
+                IpProtocol: "tcp"
+                ToPort: 80
+              -
+                CidrIp: "0.0.0.0/0"
+                FromPort: 443
+                IpProtocol: "tcp"
+                ToPort: 443
+            SecurityGroupEgress:
+              -
+                CidrIp: "0.0.0.0/0"
+                IpProtocol: "-1"
+
+
+
+Outputs:
+  SGOutput2:
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: RDSSecurityGroup
+  SGOutput4:
+    Value: !Ref FargateSecurityGroup
+    Export:
+      Name: FargateSecurityGroup
+  SGOutput6:
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: AppSecurityGroup

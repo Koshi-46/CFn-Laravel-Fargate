@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "VPC,Subnet,IGW,RouteTable, Create"
+Metadata:
+    "AWS::CloudFormation::Interface":
+      ParameterGroups:
+        - Label:
+            default: "Project Name"
+          Parameters:
+            - PJName
+        - Label:
+            default: "Network Configuration"
+          Parameters:
+            - VPCCIDR
+            - PublicSubnetACIDR
+            - PublicSubnetCCIDR
+      ParameterLabels:
+        VPCCIDR:
+          default: "VPC CIDR"
+        PublicSubnetACIDR:
+          default: "PublicSubnetA CIDR"
+        PublicSubnetCCIDR:
+          default: "PublicSubnetC CIDR"
+
+
+# ------------------------------------------------------------#
+# Input Parameters
+# ------------------------------------------------------------#
+Parameters:
+  PJName:
+    Type: String
+    Default: "sample-vpc"
+
+  VPCCIDR:
+    Type: String
+    Default: "10.0.0.0/16"
+
+  PublicSubnetACIDR:
+    Type: String
+    Default: "10.0.0.0/20"
+
+  PublicSubnetCCIDR:
+    Type: String
+    Default: "10.0.16.0/20"
+
+Resources:
+# ------------------------------------------------------------#
+#  VPC
+# ------------------------------------------------------------#
+    # VPC Create
+    VPC:
+      Type: "AWS::EC2::VPC"
+      Properties:
+          CidrBlock: !Ref VPCCIDR
+          EnableDnsSupport: true
+          EnableDnsHostnames: true
+          InstanceTenancy: "default"
+          Tags:
+            -
+              Key: "Name"
+              Value: !Sub "${PJName}-vpc"
+
+    # InternetGateway Create
+    InternetGateway:
+      Type: "AWS::EC2::InternetGateway"
+      Properties:
+        Tags:
+          - Key: Name
+            Value: !Sub "${PJName}-igw"
+
+    # IGW Attach
+    InternetGatewayAttachment:
+      Type: "AWS::EC2::VPCGatewayAttachment"
+      Properties:
+        InternetGatewayId: !Ref InternetGateway
+        VpcId: !Ref VPC
+
+
+# ------------------------------------------------------------#
+#  Subnet
+# ------------------------------------------------------------#
+    # Public SubnetA Create
+    PublicSubnetA:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        AvailabilityZone: !Sub ${AWS::Region}a
+        CidrBlock: !Ref PublicSubnetACIDR
+        VpcId: !Ref VPC
+        MapPublicIpOnLaunch: true
+        Tags:
+          - Key: Name
+            Value: !Sub "${PJName}-public-subnet-a"
+
+    # Public SubnetC Create
+    PublicSubnetC:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        AvailabilityZone: !Sub ${AWS::Region}c
+        CidrBlock: !Ref PublicSubnetCCIDR
+        VpcId: !Ref VPC
+        MapPublicIpOnLaunch: true
+        Tags:
+          - Key: Name
+            Value: !Sub "${PJName}-public-subnet-c"
+
+# ------------------------------------------------------------#
+#  RouteTable
+# ------------------------------------------------------------#
+    # Public RouteTableA Create
+    PublicRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId: !Ref VPC
+        Tags:
+          - Key: Name
+            Value: !Sub "${PJName}-public-route"
+
+# ------------------------------------------------------------#
+# Routing
+# ------------------------------------------------------------#
+  # PublicRoute Create
+    PublicRoute:
+      Type: "AWS::EC2::Route"
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        DestinationCidrBlock: "0.0.0.0/0"
+        GatewayId: !Ref InternetGateway
+
+
+# ------------------------------------------------------------#
+# RouteTable Associate ##RouteTableとSubnetの関連付け
+# ------------------------------------------------------------#
+  # PublicRouteTable Associate SubnetA
+    PublicSubnetARouteTableAssociation:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId: !Ref PublicSubnetA
+        RouteTableId: !Ref PublicRouteTable
+
+  # PublicRouteTable Associate SubnetC
+    PublicSubnetCRouteTableAssociation:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId: !Ref PublicSubnetC
+        RouteTableId: !Ref PublicRouteTable
+
+
+# ------------------------------------------------------------#
+# Output Parameters
+# ------------------------------------------------------------#
+Outputs:
+# VPC
+  VPC:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${PJName}-vpc"
+
+# Subnet
+  PublicSubnetA:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${PJName}-public-subnet-a"
+
+  PublicSubnetC:
+    Value: !Ref PublicSubnetC
+    Export:
+      Name: !Sub "${PJName}-public-subnet-c"

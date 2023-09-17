@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ""
+Parameters:
+  TaskDefinitionName:
+    Default: laravel-fargate
+    Type: String
+  RepositoryNameNginx:
+    Description: ECR repository for nginx
+    Default: laravel-nginx
+    Type: String
+  RepositoryNamePhp:
+    Description: ECR repository for php
+    Default: laravel-php
+    Type: String
+Resources:
+#-----------------------------------------------------------------------------
+# ecsTaskExecutionRole
+#-----------------------------------------------------------------------------
+    ECSTaskExecutionRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/"
+            RoleName: "ecsTaskExecutionRole"
+            AssumeRolePolicyDocument:
+              Version: 2008-10-17
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service:
+                      - ecs-tasks.amazonaws.com
+                  Action:
+                    - 'sts:AssumeRole'
+            ManagedPolicyArns:
+              - "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+              - "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+              # - !Sub "arn:aws:iam::${AWS::AccountId}:policy/ssm-ecs-policy"
+              # - "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
+              # - "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+
+
+#-----------------------------------------------------------------------------
+# TaskDefinition
+#-----------------------------------------------------------------------------
+    ECSTaskDefinition:
+        Type: "AWS::ECS::TaskDefinition"
+        Properties:
+            Family: !Ref TaskDefinitionName
+            ExecutionRoleArn: !GetAtt  ECSTaskExecutionRole.Arn
+            NetworkMode: "awsvpc"
+            RequiresCompatibilities:
+              - "FARGATE"
+            Cpu: "1024"
+            Memory: "3072"
+
+            ContainerDefinitions:
+              -
+                # nginx
+                Name: "nginx"
+                Essential: true
+                Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryNameNginx}:latest"
+                LogConfiguration:
+                    LogDriver: "awslogs"
+                    Options:
+                        awslogs-create-group: "true"
+                        awslogs-group: "/ecs/"
+                        awslogs-region: !Ref AWS::Region
+                        awslogs-stream-prefix: "ecs"
+                PortMappings:
+                  -
+                    ContainerPort: 80
+                    HostPort: 80
+                    Protocol: "tcp"
+              -
+                # php
+                Name: "php"
+                Essential: true
+                Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryNamePhp}:latest"
+                Command:
+                  - "php artisan config:cache && php artisan view:cache && php artisan route:cache && php artisan migrate --force && chown -hR www-data:www-data storage bootstrap/cache && php-fpm && composer install --optimize-autoloader --no-dev"
+                EntryPoint:
+                  - "sh"
+                  - "-c"
+                Environment:
+                  -
+                    Name: "APP_ENV"
+                    Value: "production"
+                WorkingDirectory: "/var/www/html"
